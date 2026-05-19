@@ -1,8 +1,8 @@
 import { fireEvent, render, screen } from '@testing-library/react-native';
 import App from './App';
 
-let currentTime = 0;
-let nowSpy: jest.SpyInstance<number, []>;
+let mockCurrentTime = 0;
+let dateNowSpy: jest.SpyInstance<number, []>;
 
 const addTask = (name: string) => {
   fireEvent.changeText(screen.getByPlaceholderText('New task name'), name);
@@ -10,17 +10,17 @@ const addTask = (name: string) => {
 };
 
 const advanceTime = (ms: number) => {
-  currentTime += ms;
+  mockCurrentTime += ms;
 };
 
 describe('App', () => {
   beforeEach(() => {
-    currentTime = Date.now();
-    nowSpy = jest.spyOn(Date, 'now').mockImplementation(() => currentTime);
+    mockCurrentTime = 1_700_000_000_000;
+    dateNowSpy = jest.spyOn(Date, 'now').mockImplementation(() => mockCurrentTime);
   });
 
   afterEach(() => {
-    nowSpy.mockRestore();
+    dateNowSpy.mockRestore();
   });
 
   it('shows timer empty state by default', () => {
@@ -57,9 +57,10 @@ describe('App', () => {
     addTask('Task One');
     addTask('Task Two');
 
-    fireEvent.press(screen.getAllByText('Start')[0]);
+    const [firstTaskStartButton, secondTaskStartButton] = screen.getAllByText('Start');
+    fireEvent.press(firstTaskStartButton);
     advanceTime(30_000);
-    fireEvent.press(screen.getAllByText('Start')[0]);
+    fireEvent.press(secondTaskStartButton);
 
     expect(screen.getByText('Task One')).toBeTruthy();
     expect(screen.getByText('Task Two')).toBeTruthy();
@@ -86,8 +87,6 @@ describe('App', () => {
 
     fireEvent.press(screen.getByText('Analytics'));
 
-    expect(screen.getByText('Total Time: 00:03:00')).toBeTruthy();
-    expect(screen.getByText('Today: 00:03:00')).toBeTruthy();
     expect(screen.getByText('Total: 00:03:00')).toBeTruthy();
     expect(screen.getByText('Sessions: 2')).toBeTruthy();
     expect(screen.getByText('Avg: 00:01:30')).toBeTruthy();

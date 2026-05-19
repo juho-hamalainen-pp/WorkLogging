@@ -13,6 +13,9 @@ import {
   Dimensions,
 } from 'react-native';
 import { PieChart } from 'react-native-chart-kit';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
+import { File, Paths } from 'expo-file-system';
 
 type Task = {
   id: string;
@@ -81,6 +84,26 @@ export default function App() {
       { id: `${Date.now()}-${Math.random()}`, name, startedAt: null },
     ]);
     setDraft('');
+  };
+
+  const SUGGESTED_TASKS = [
+    'JIRA',
+    'R&D',
+    'eMail',
+    'Meeting',
+    'Support',
+    'On the phone',
+    'Thinking',
+    'Resting',
+    'In pain and agony',
+  ];
+
+  const addSuggestedTask = (name: string) => {
+    if (tasks.some((t) => t.name.toLowerCase() === name.toLowerCase())) return;
+    setTasks((prev) => [
+      ...prev,
+      { id: `${Date.now()}-${Math.random()}`, name, startedAt: null },
+    ]);
   };
 
   const toggleTask = (id: string) => {
@@ -214,6 +237,24 @@ export default function App() {
         </Pressable>
       </View>
 
+      <View style={styles.suggestionsRow}>
+        {SUGGESTED_TASKS.map((name) => {
+          const exists = tasks.some((t) => t.name.toLowerCase() === name.toLowerCase());
+          return (
+            <Pressable
+              key={name}
+              style={[styles.suggestionChip, exists && styles.suggestionChipDisabled]}
+              onPress={() => addSuggestedTask(name)}
+              disabled={exists}
+            >
+              <Text style={[styles.suggestionChipText, exists && styles.suggestionChipTextDisabled]}>
+                {exists ? name : `+ ${name}`}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
       <FlatList
         data={tasks}
         keyExtractor={(t) => t.id}
@@ -292,9 +333,273 @@ export default function App() {
     );
   };
 
+  const buildReportHtml = (): string => {
+    const palette = ['#2563eb', '#dc2626', '#16a34a', '#f59e0b', '#8b5cf6', '#ec4899'];
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEntries = timeEntries.filter((e) => new Date(e.startTime) >= todayStart);
+
+    const todayBreakdown = tasks
+      .map((task, idx) => {
+        const duration = todayEntries
+          .filter((e) => e.taskId === task.id)
+          .reduce((sum, e) => sum + e.duration, 0);
+        return { name: task.name, duration, color: palette[idx % palette.length] };
+      })
+      .filter((d) => d.duration > 0)
+      .sort((a, b) => b.duration - a.duration);
+
+    const totalToday = todayBreakdown.reduce((s, d) => s + d.duration, 0);
+    const maxToday = todayBreakdown[0]?.duration ?? 0;
+
+    const taskRows = tasks
+      .map((task) => {
+        const stats = getTaskStats(task.id);
+        const todayTime = todayEntries
+          .filter((e) => e.taskId === task.id)
+          .reduce((sum, e) => sum + e.duration, 0);
+        return { task, stats, todayTime };
+      })
+      .sort((a, b) => b.stats.totalDuration - a.stats.totalDuration);
+
+    const escapeHtml = (s: string) =>
+      s.replace(/[&<>"']/g, (c) =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!
+      );
+
+    const barRows = todayBreakdown
+      .map((d) => {
+        const pct = maxToday > 0 ? (d.duration / maxToday) * 100 : 0;
+        const share = totalToday > 0 ? ((d.duration / totalToday) * 100).toFixed(1) : '0.0';
+        return `
+          <div class="bar-row">
+            <div class="bar-label">${escapeHtml(d.name)}</div>
+            <div class="bar-track">
+              <div class="bar-fill" style="width:${pct.toFixed(2)}%; background:${d.color};"></div>
+            </div>
+            <div class="bar-value">${formatDuration(d.duration)} <span class="muted">(${share}%)</span></div>
+          </div>`;
+      })
+      .join('');
+
+    const taskCards = taskRows
+      .map(({ task, stats, todayTime }) => `
+        <div class="card">
+          <div class="card-title">${escapeHtml(task.name)}</div>
+          <div class="card-grid">
+            <div><span class="muted">Today</span><br><b>${formatDuration(todayTime)}</b></div>
+            <div><span class="muted">Total</span><br><b>${formatDuration(stats.totalDuration)}</b></div>
+            <div><span class="muted">Sessions</span><br><b>${stats.count}</b></div>
+            <div><span class="muted">Avg</span><br><b>${stats.count > 0 ? formatDuration(stats.avgDuration) : '—'}</b></div>
+          </div>
+        </div>`)
+      .join('');
+
+    const generatedAt = new Date().toLocaleString();
+
+    return `<!DOCTYPE html>
+<html><head><meta charset="utf-8" />
+<title>Work Log Report</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #1a1a1a; margin: 0; padding: 32px; background: #f5f6f8; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  h2 { font-size: 18px; margin: 28px 0 12px; border-bottom: 2px solid #e6e6e6; padding-bottom: 6px; }
+  .muted { color: #666; font-size: 12px; }
+  .summary { background: #fff; border: 1px solid #e6e6e6; border-radius: 12px; padding: 16px 20px; margin-top: 12px; }
+  .summary .big { font-size: 32px; font-weight: 700; color: #2563eb; }
+  .bar-row { display: grid; grid-template-columns: 160px 1fr 160px; align-items: center; gap: 12px; margin-bottom: 10px; }
+  .bar-label { font-size: 13px; font-weight: 600; }
+  .bar-track { background: #e6e6e6; border-radius: 6px; height: 18px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 6px; }
+  .bar-value { font-size: 13px; text-align: right; font-variant-numeric: tabular-nums; }
+  .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+  .card { background: #fff; border: 1px solid #e6e6e6; border-radius: 10px; padding: 14px 16px; }
+  .card-title { font-size: 15px; font-weight: 700; margin-bottom: 10px; }
+  .card-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; font-size: 13px; }
+  .empty { color: #888; font-style: italic; }
+  @media print { body { background: #fff; padding: 16px; } }
+</style></head>
+<body>
+  <h1>Work Log Report</h1>
+  <div class="muted">Generated ${escapeHtml(generatedAt)}</div>
+
+  <div class="summary">
+    <div class="muted">Total time logged today</div>
+    <div class="big">${formatDuration(totalToday)}</div>
+    <div class="muted">${todayEntries.length} session${todayEntries.length === 1 ? '' : 's'} across ${todayBreakdown.length} task${todayBreakdown.length === 1 ? '' : 's'}</div>
+  </div>
+
+  <h2>Time Distribution — Today</h2>
+  ${barRows || '<div class="empty">No time logged today.</div>'}
+
+  <h2>Task Breakdown — All Time</h2>
+  ${taskCards ? `<div class="cards">${taskCards}</div>` : '<div class="empty">No tasks yet.</div>'}
+</body></html>`;
+  };
+
+  const exportReport = async () => {
+    const html = buildReportHtml();
+    try {
+      if (Platform.OS === 'web') {
+        const win = window.open('', '_blank');
+        if (win) {
+          win.document.write(html);
+          win.document.close();
+          win.focus();
+          setTimeout(() => win.print(), 300);
+        }
+        return;
+      }
+      const { uri } = await Print.printToFileAsync({ html });
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: 'Work Log Report' });
+      }
+    } catch (err) {
+      console.warn('Export failed', err);
+    }
+  };
+
+  const csvEscape = (val: string | number): string => {
+    const s = String(val);
+    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+
+  const toIsoLocal = (ts: number): string => new Date(ts).toISOString();
+
+  const jiraTimeSpent = (ms: number): string => {
+    const totalMinutes = Math.max(1, Math.round(ms / 60000));
+    const h = Math.floor(totalMinutes / 60);
+    const m = totalMinutes % 60;
+    if (h > 0 && m > 0) return `${h}h ${m}m`;
+    if (h > 0) return `${h}h`;
+    return `${m}m`;
+  };
+
+  const jiraIssueKey = (taskName: string): string => {
+    const match = taskName.match(/^[A-Z][A-Z0-9]+-\d+/);
+    return match ? match[0] : '';
+  };
+
+  const sortedEntriesAsc = () =>
+    [...timeEntries].sort((a, b) => a.startTime - b.startTime);
+
+  const buildCsv = (): string => {
+    const header = ['Date', 'Task', 'Start', 'End', 'Duration (HH:MM:SS)', 'Duration (seconds)'];
+    const rows = sortedEntriesAsc().map((e) => [
+      new Date(e.startTime).toISOString().slice(0, 10),
+      e.taskName,
+      toIsoLocal(e.startTime),
+      toIsoLocal(e.endTime),
+      formatDuration(e.duration),
+      Math.round(e.duration / 1000),
+    ]);
+    return [header, ...rows].map((r) => r.map(csvEscape).join(',')).join('\r\n');
+  };
+
+  const buildJiraCsv = (): string => {
+    // Jira-friendly worklog CSV: one row per entry.
+    // "Issue Key" auto-extracted if task name starts with e.g. ABC-123, else blank.
+    const header = ['Issue Key', 'Date Started', 'Time Spent', 'Time Spent (seconds)', 'Comment'];
+    const rows = sortedEntriesAsc().map((e) => [
+      jiraIssueKey(e.taskName),
+      toIsoLocal(e.startTime),
+      jiraTimeSpent(e.duration),
+      Math.max(60, Math.round(e.duration / 1000)),
+      e.taskName,
+    ]);
+    return [header, ...rows].map((r) => r.map(csvEscape).join(',')).join('\r\n');
+  };
+
+  const buildJson = (): string => {
+    return JSON.stringify(
+      {
+        exportedAt: new Date().toISOString(),
+        tasks: tasks.map(({ id, name }) => ({ id, name })),
+        entries: sortedEntriesAsc().map((e) => ({
+          id: e.id,
+          taskId: e.taskId,
+          taskName: e.taskName,
+          startTime: toIsoLocal(e.startTime),
+          endTime: toIsoLocal(e.endTime),
+          durationMs: e.duration,
+          durationSeconds: Math.round(e.duration / 1000),
+          durationFormatted: formatDuration(e.duration),
+        })),
+      },
+      null,
+      2
+    );
+  };
+
+  const shareTextFile = async (
+    fileName: string,
+    content: string,
+    mimeType: string,
+    dialogTitle: string
+  ) => {
+    try {
+      if (Platform.OS === 'web') {
+        const blob = new Blob([content], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        return;
+      }
+      const file = new File(Paths.cache, fileName);
+      if (file.exists) file.delete();
+      file.create();
+      file.write(content);
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(file.uri, { mimeType, dialogTitle, UTI: mimeType });
+      }
+    } catch (err) {
+      console.warn('Export failed', err);
+    }
+  };
+
+  const exportCsv = () => {
+    if (timeEntries.length === 0) return;
+    const date = new Date().toISOString().slice(0, 10);
+    shareTextFile(`worklog-${date}.csv`, buildCsv(), 'text/csv', 'Work Log CSV');
+  };
+
+  const exportJiraCsv = () => {
+    if (timeEntries.length === 0) return;
+    const date = new Date().toISOString().slice(0, 10);
+    shareTextFile(`worklog-jira-${date}.csv`, buildJiraCsv(), 'text/csv', 'Jira Worklog CSV');
+  };
+
+  const exportJson = () => {
+    if (timeEntries.length === 0) return;
+    const date = new Date().toISOString().slice(0, 10);
+    shareTextFile(`worklog-${date}.json`, buildJson(), 'application/json', 'Work Log JSON');
+  };
+
   const renderAnalyticsTab = () => (
     <ScrollView style={styles.analyticsContainer} contentContainerStyle={styles.analyticsList}>
-      <Text style={styles.analyticsTitle}>Today's Summary</Text>
+      <View style={styles.analyticsHeader}>
+        <Text style={styles.analyticsTitle}>Today's Summary</Text>
+        <Pressable style={styles.exportBtn} onPress={exportReport}>
+          <Text style={styles.exportBtnText}>Export PDF</Text>
+        </Pressable>
+      </View>
+      <View style={styles.exportRow}>
+        <Pressable style={[styles.exportBtn, styles.exportBtnSecondary]} onPress={exportCsv}>
+          <Text style={styles.exportBtnSecondaryText}>CSV</Text>
+        </Pressable>
+        <Pressable style={[styles.exportBtn, styles.exportBtnSecondary]} onPress={exportJiraCsv}>
+          <Text style={styles.exportBtnSecondaryText}>Jira CSV</Text>
+        </Pressable>
+        <Pressable style={[styles.exportBtn, styles.exportBtnSecondary]} onPress={exportJson}>
+          <Text style={styles.exportBtnSecondaryText}>JSON</Text>
+        </Pressable>
+      </View>
       <Text style={styles.analyticsStat}>Total Time: {formatDuration(getTodayTime())}</Text>
 
       <Text style={styles.analyticsTitle}>Time Distribution</Text>
@@ -324,7 +629,7 @@ export default function App() {
           }
 
           const data = chartData.map((item, idx) => ({
-            name: item.name,
+            name: `${item.name} (${formatDuration(item.duration)})`,
             duration: Math.round(item.duration / 1000),
             color: ['#2563eb', '#dc2626', '#16a34a', '#f59e0b', '#8b5cf6', '#ec4899'][idx % 6],
             legendFontColor: '#666',
@@ -345,7 +650,6 @@ export default function App() {
                 accessor={'duration'}
                 backgroundColor={'transparent'}
                 paddingLeft={'15'}
-                absolute
               />
             </View>
           );
@@ -485,6 +789,33 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontSize: 16,
   },
+  suggestionsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    gap: 8,
+  },
+  suggestionChip: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#2563eb',
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  suggestionChipDisabled: {
+    backgroundColor: '#eef0f3',
+    borderColor: '#d1d5db',
+  },
+  suggestionChipText: {
+    color: '#2563eb',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  suggestionChipTextDisabled: {
+    color: '#9ca3af',
+  },
   list: {
     paddingHorizontal: 16,
     paddingBottom: 24,
@@ -603,6 +934,38 @@ const styles = StyleSheet.create({
     color: '#1a1a1a',
     marginTop: 16,
     marginBottom: 12,
+  },
+  analyticsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  exportBtn: {
+    backgroundColor: '#2563eb',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  exportBtnText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  exportRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+    flexWrap: 'wrap',
+  },
+  exportBtnSecondary: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#2563eb',
+  },
+  exportBtnSecondaryText: {
+    color: '#2563eb',
+    fontSize: 13,
+    fontWeight: '600',
   },
   analyticsStat: {
     fontSize: 16,

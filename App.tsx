@@ -10,7 +10,9 @@ import {
   Text,
   TextInput,
   View,
+  Dimensions,
 } from 'react-native';
+import { PieChart } from 'react-native-chart-kit';
 
 type Task = {
   id: string;
@@ -295,6 +297,63 @@ export default function App() {
       <Text style={styles.analyticsTitle}>Today's Summary</Text>
       <Text style={styles.analyticsStat}>Total Time: {formatDuration(getTodayTime())}</Text>
 
+      <Text style={styles.analyticsTitle}>Time Distribution</Text>
+      {tasks.length > 0 && timeEntries.length > 0 ? (
+        (() => {
+          const todayEntries = timeEntries.filter((e) => {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            return new Date(e.startTime) >= today;
+          });
+
+          if (todayEntries.length === 0) {
+            return <Text style={styles.empty}>No time entries today yet.</Text>;
+          }
+
+          const chartData = tasks
+            .map((task) => {
+              const taskTime = todayEntries
+                .filter((e) => e.taskId === task.id)
+                .reduce((sum, e) => sum + e.duration, 0);
+              return { name: task.name, duration: taskTime };
+            })
+            .filter((d) => d.duration > 0);
+
+          if (chartData.length === 0) {
+            return <Text style={styles.empty}>No time logged today.</Text>;
+          }
+
+          const data = chartData.map((item, idx) => ({
+            name: item.name,
+            duration: Math.round(item.duration / 1000),
+            color: ['#2563eb', '#dc2626', '#16a34a', '#f59e0b', '#8b5cf6', '#ec4899'][idx % 6],
+            legendFontColor: '#666',
+            legendFontSize: 12,
+          }));
+
+          return (
+            <View style={styles.chartContainer}>
+              <PieChart
+                data={data}
+                width={Dimensions.get('window').width - 32}
+                height={220}
+                chartConfig={{
+                  color: (opacity = 1) => `rgba(26, 26, 26, ${opacity})`,
+                  strokeColor: '#e6e6e6',
+                  backgroundColor: '#f5f6f8',
+                }}
+                accessor={'duration'}
+                backgroundColor={'transparent'}
+                paddingLeft={'15'}
+                absolute
+              />
+            </View>
+          );
+        })()
+      ) : (
+        <Text style={styles.empty}>Add tasks and log time to see distribution.</Text>
+      )}
+
       <Text style={styles.analyticsTitle}>Task Breakdown</Text>
       {tasks.length === 0 ? (
         <Text style={styles.empty}>No tasks yet.</Text>
@@ -549,6 +608,10 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#333',
     marginBottom: 8,
+  },
+  chartContainer: {
+    marginBottom: 16,
+    alignItems: 'center',
   },
   statCard: {
     backgroundColor: '#fff',

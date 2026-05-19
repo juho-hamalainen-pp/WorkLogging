@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "WorkLogging",
-    "slug": "WorkLogging",
+    "slug": "work-logging",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -12,7 +12,8 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.worklogging.app"
     },
     "android": {
       "adaptiveIcon": {
@@ -21,10 +22,18 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
+      "package": "com.worklogging.app",
+      "versionCode": 1,
+      "permissions": [],
       "predictiveBackGestureEnabled": false
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "ea777932-85ea-4a70-a426-196e302d6045"
+      }
     }
   }
 }

@@ -11,11 +11,13 @@ import {
   TextInput,
   View,
   Dimensions,
+  Modal, 
 } from 'react-native';
 import { PieChart } from 'react-native-chart-kit';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { File, Paths } from 'expo-file-system';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 type Task = {
   id: string;
@@ -54,6 +56,7 @@ function formatDate(timestamp: number): string {
 export default function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [timeEntries, setTimeEntries] = useState<TimeEntry[]>([]);
+  const [showClearModal, setShowClearModal] = useState(false);
   const [draft, setDraft] = useState('');
   const [, setTick] = useState(0);
   const [currentTab, setCurrentTab] = useState<'timer' | 'log' | 'analytics'>('timer');
@@ -61,6 +64,7 @@ export default function App() {
 
   const hasRunning = tasks.some((t) => t.startedAt !== null);
 
+  // Timer effect
   useEffect(() => {
     if (hasRunning && intervalRef.current === null) {
       intervalRef.current = setInterval(() => setTick((n) => n + 1), 1000);
@@ -75,6 +79,30 @@ export default function App() {
       }
     };
   }, [hasRunning]);
+
+  // Persistence: load on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const [tasksRaw, entriesRaw] = await Promise.all([
+          AsyncStorage.getItem('tasks'),
+          AsyncStorage.getItem('timeEntries'),
+        ]);
+        if (tasksRaw) setTasks(JSON.parse(tasksRaw));
+        if (entriesRaw) setTimeEntries(JSON.parse(entriesRaw));
+      } catch (e) {
+        console.warn('Failed to load data', e);
+      }
+    })();
+  }, []);
+
+  // Persistence: save on change
+  useEffect(() => {
+    AsyncStorage.setItem('tasks', JSON.stringify(tasks)).catch(() => {});
+  }, [tasks]);
+  useEffect(() => {
+    AsyncStorage.setItem('timeEntries', JSON.stringify(timeEntries)).catch(() => {});
+  }, [timeEntries]);
 
   const addTask = () => {
     const name = draft.trim();
@@ -121,7 +149,7 @@ export default function App() {
               id: `${Date.now()}-${Math.random()}`,
               taskId: id,
               taskName: t.name,
-              startTime: t.startedAt,
+              startTime: t.startedAt ?? now, // fallback to now if null (shouldn't happen)
               endTime: now,
               duration,
             },
@@ -263,7 +291,8 @@ export default function App() {
         }
         renderItem={({ item }) => {
           const running = item.startedAt !== null;
-          const currentSessionMs = running ? Date.now() - item.startedAt : 0;
+          // Fix: startedAt can be null, so check before using
+          const currentSessionMs = running && item.startedAt !== null ? Date.now() - item.startedAt : 0;
           const totalMs = getTotalTimeForTask(item.id) + currentSessionMs;
           return (
             <View style={[styles.task, running && styles.taskRunning]}>
@@ -581,6 +610,13 @@ export default function App() {
     shareTextFile(`worklog-${date}.json`, buildJson(), 'application/json', 'Work Log JSON');
   };
 
+  const clearAllData = async () => {
+    setShowClearModal(false);
+    setTasks([]);
+    setTimeEntries([]);
+    await AsyncStorage.multiRemove(['tasks', 'timeEntries']);
+  };
+
   const renderAnalyticsTab = () => (
     <ScrollView style={styles.analyticsContainer} contentContainerStyle={styles.analyticsList}>
       <View style={styles.analyticsHeader}>
@@ -599,7 +635,32 @@ export default function App() {
         <Pressable style={[styles.exportBtn, styles.exportBtnSecondary]} onPress={exportJson}>
           <Text style={styles.exportBtnSecondaryText}>JSON</Text>
         </Pressable>
+        <Pressable style={[styles.exportBtn, styles.exportBtnDanger]} onPress={() => setShowClearModal(true)}>
+          <Text style={styles.exportBtnDangerText}>Clear All Data</Text>
+        </Pressable>
       </View>
+
+      <Modal
+        visible={showClearModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowClearModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <Text style={styles.modalTitle}>Are you sure?</Text>
+            <Text style={styles.modalText}>This will permanently delete all tasks and time entries. This action cannot be undone.</Text>
+            <View style={styles.modalActions}>
+              <Pressable style={[styles.exportBtn, styles.exportBtnDanger, {flex:1, marginRight:8}]} onPress={clearAllData}>
+                <Text style={styles.exportBtnDangerText}>Yes, clear all</Text>
+              </Pressable>
+              <Pressable style={[styles.exportBtn, {flex:1, backgroundColor:'#eee', borderColor:'#eee'}]} onPress={() => setShowClearModal(false)}>
+                <Text style={{color:'#333', fontWeight:'600', fontSize:13}}>Cancel</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
       <Text style={styles.analyticsStat}>Total Time: {formatDuration(getTodayTime())}</Text>
 
       <Text style={styles.analyticsTitle}>Time Distribution</Text>
@@ -644,7 +705,7 @@ export default function App() {
                 height={220}
                 chartConfig={{
                   color: (opacity = 1) => `rgba(26, 26, 26, ${opacity})`,
-                  strokeColor: '#e6e6e6',
+                  // strokeColor removed: not a valid PieChart config property
                   backgroundColor: '#f5f6f8',
                 }}
                 accessor={'duration'}
@@ -966,6 +1027,50 @@ const styles = StyleSheet.create({
     color: '#2563eb',
     fontSize: 13,
     fontWeight: '600',
+  },
+  exportBtnDanger: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#dc2626',
+  },
+  exportBtnDangerText: {
+    color: '#dc2626',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.25)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalBox: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 24,
+    width: 320,
+    maxWidth: '90%',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#dc2626',
+    marginBottom: 8,
+  },
+  modalText: {
+    fontSize: 14,
+    color: '#333',
+    marginBottom: 18,
+    textAlign: 'center',
+  },
+  modalActions: {
+    flexDirection: 'row',
+    width: '100%',
   },
   analyticsStat: {
     fontSize: 16,

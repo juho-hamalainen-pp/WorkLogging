@@ -7,7 +7,10 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "predeploy": "npx expo export:web",
+    "deploy": "gh-pages -d dist",
+    "homepage": "https://<juho-hamalainen-pp>.github.io/<WorkLogging>"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",

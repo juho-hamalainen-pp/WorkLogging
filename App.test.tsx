@@ -1,8 +1,8 @@
 import { fireEvent, render, screen } from '@testing-library/react-native';
 import App from './App';
 
-let currentNow = 0;
-let nowSpy: jest.SpiedFunction<typeof Date.now>;
+let currentTime = 0;
+let nowSpy: jest.SpyInstance<number, []>;
 
 const addTask = (name: string) => {
   fireEvent.changeText(screen.getByPlaceholderText('New task name'), name);
@@ -10,13 +10,13 @@ const addTask = (name: string) => {
 };
 
 const advanceTime = (ms: number) => {
-  currentNow += ms;
+  currentTime += ms;
 };
 
 describe('App', () => {
   beforeEach(() => {
-    currentNow = Date.now();
-    nowSpy = jest.spyOn(Date, 'now').mockImplementation(() => currentNow);
+    currentTime = Date.now();
+    nowSpy = jest.spyOn(Date, 'now').mockImplementation(() => currentTime);
   });
 
   afterEach(() => {
